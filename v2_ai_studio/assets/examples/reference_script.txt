@@ -1,0 +1,16 @@
+Today, we’ll look at the key AWS services used in machine learning.
+We’ll divide this into two parts: compute and model training, and then data storage and processing.”
+
+First, let’s talk about compute and training.
+The most important service here is Amazon SageMaker. Think of SageMaker as an all-in-one platform for machine learning. It allows us to build models, train them at scale, and deploy them without managing infrastructure. It also supports distributed training, hyperparameter tuning, pipelines, and both real-time and batch inference, all in one place.
+
+If we are not using SageMaker, we can directly use Amazon EC2. EC2 provides virtual machines, including powerful GPU instances like p3 and g5, which are essential for training deep learning models.
+For inference, AWS provides different options based on the use case. AWS Batch is used when we need to run large-scale batch predictions offline. AWS Lambda is useful for lightweight, event-driven inference where we don’t want to manage servers.
+
+Now, let’s move to data storage and processing.
+At the center of most ML workflows is Amazon S3. It is used to store raw data, processed datasets, trained models, and logs.
+To clean and transform data before training, we use AWS Glue, which is a serverless ETL service.
+For structured data, AWS offers Amazon Redshift for large-scale analytics, Amazon Athena to query data directly from S3 using SQL, and Amazon RDS for relational databases.
+Finally, for real-time data, Amazon Kinesis handles streaming data, while AWS IoT Core collects data from connected devices and feeds it into ML systems.
+
+So overall, AWS provides end-to-end services that support the full machine learning pipeline—from data ingestion and storage to model training and inference.

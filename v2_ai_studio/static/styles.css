@@ -1,0 +1,112 @@
+/* RESET */
+* {
+    box-sizing: border-box;
+}
+
+/* BASE */
+body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #f5f7fa;
+}
+
+/* HEADER */
+header {
+    background: #1f2937;
+    color: white;
+    padding: 16px 32px;
+    font-size: 22px;
+    font-weight: 600;
+    height: 64px;
+}
+
+/* MAIN SPLIT LAYOUT */
+.container {
+    display: flex;
+    height: calc(100vh - 64px);
+}
+
+/* LEFT PANEL */
+.left-panel {
+    width: 50%;
+    padding: 30px;
+    background: white;
+    border-right: 1px solid #ddd;
+}
+
+/* RIGHT PANEL */
+.right-panel {
+    width: 50%;
+    padding: 30px;
+    overflow-y: auto;
+}
+
+/* CONTENT BOX */
+.content-box {
+    background: #ffffff;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    min-height: 120px;
+}
+
+/* BUTTONS */
+button {
+    width: 100%;
+    padding: 14px;
+    margin-bottom: 16px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#visualStage {
+    margin-top: 20px;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 20px;
+    min-height: 180px;
+}
+
+.scene {
+    display: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+.scene.active {
+    display: block;
+    opacity: 1;
+}
+
+.scene-text {
+    font-size: 18px;
+    line-height: 1.6;
+}
+
+/* Highlight effect */
+.scene-text span.active-word {
+    background: #fff3bf;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.script-box {
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+.script-box p {
+    margin-bottom: 14px;
+}

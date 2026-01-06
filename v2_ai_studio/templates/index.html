@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Tutor Studio</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+
+<header>🎓 AI Tutor Studio</header>
+
+<div class="container">
+
+    <!-- LEFT PANEL -->
+    <section class="left-panel">
+        <h2>Upload Document</h2>
+        <p>Upload a PDF or PPT</p>
+
+        <form action="/ui/generate" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" required />
+            <button type="submit">Generate Script</button>
+        </form>
+    </section>
+
+    <!-- RIGHT PANEL -->
+    <section class="right-panel">
+        <h2>Generated Script</h2>
+
+        <div class="content-box script-box">
+            {% if script %}
+                {% if "Slide 1:" in script %}
+                    {% for block in script.split("Slide ") if block.strip() %}
+                        {% set parts = block.split(":", 1) %}
+                        <div style="margin-bottom: 20px;">
+                            <h4 style="color:#2563eb;">
+                                Slide {{ parts[0].strip() }}
+                            </h4>
+                            <p>{{ parts[1].strip() }}</p>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    {% for para in script.split('\n\n') %}
+                        <p>{{ para }}</p>
+                    {% endfor %}
+                {% endif %}
+            {% else %}
+                <p>Your generated tutorial script will appear here.</p>
+            {% endif %}
+        </div>
+
+        {% if script %}
+        <!-- ✅ FIXED FORM -->
+        <form action="/ui/audio" method="post">
+            <!-- REQUIRED -->
+            <textarea name="script" style="display:none;">{{ script }}</textarea>
+
+            <!-- 🔥 REQUIRED: this was missing earlier -->
+            <textarea name="slides_json" style="display:none;">{{ slides_json }}</textarea>
+
+            <button type="submit">▶ Generate Audio & Slides</button>
+        </form>
+        {% endif %}
+    </section>
+
+</div>
+
+</body>
+</html>
