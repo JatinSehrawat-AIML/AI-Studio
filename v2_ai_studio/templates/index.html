@@ -28,33 +28,31 @@
 
         <div class="content-box script-box">
             {% if script %}
-                {% if "Slide 1:" in script %}
-                    {% for block in script.split("Slide ") if block.strip() %}
-                        {% set parts = block.split(":", 1) %}
+                {% set blocks = script.split("Slide ") %}
+                {% for block in blocks if block.strip() %}
+                    {% set parts = block.split(":", 1) %}
+                    {% if parts|length == 2 %}
                         <div style="margin-bottom: 20px;">
                             <h4 style="color:#2563eb;">
                                 Slide {{ parts[0].strip() }}
                             </h4>
                             <p>{{ parts[1].strip() }}</p>
                         </div>
-                    {% endfor %}
-                {% else %}
-                    {% for para in script.split('\n\n') %}
-                        <p>{{ para }}</p>
-                    {% endfor %}
-                {% endif %}
+                    {% endif %}
+                {% endfor %}
             {% else %}
                 <p>Your generated tutorial script will appear here.</p>
             {% endif %}
         </div>
 
-        {% if script %}
-        <!-- ✅ FIXED FORM -->
+        {% if script and slides_json %}
+        <!-- AUDIO GENERATION -->
         <form action="/ui/audio" method="post">
+
             <!-- REQUIRED -->
             <textarea name="script" style="display:none;">{{ script }}</textarea>
 
-            <!-- 🔥 REQUIRED: this was missing earlier -->
+            <!-- 🔥 REQUIRED: THIS WAS MISSING -->
             <textarea name="slides_json" style="display:none;">{{ slides_json }}</textarea>
 
             <button type="submit">▶ Generate Audio & Slides</button>

@@ -1,7 +1,6 @@
 # llm/script_generator.py
 from llm.gemini_client import generate
 from pathlib import Path
-import re
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -13,47 +12,50 @@ def _load_text(path: Path) -> str:
     return path.read_text().strip() if path.exists() else ""
 
 
-# ---------------- STRONG SLIDE SPLITTER ----------------
+# ---------------- DYNAMIC SLIDE SPLITTER ----------------
 
-KNOWN_SECTION_HEADERS = [
-    "Compute & Model Training",
-    "Data Storage & Processing",
-]
-
-def _split_single_slide_into_sections(slide: dict) -> list[dict]:
+def _split_single_slide_into_sections(
+    slide: dict,
+    max_words: int = 120
+) -> list[dict]:
     """
-    Deterministically split a single large slide into logical sub-slides
-    using paragraph boundaries.
+    Dynamically split a large collapsed slide into multiple logical slides
+    based on content length.
 
-    This is a LAST-RESORT fallback when PPT extraction collapses slides.
+    This avoids forcing content into only 2 slides.
     """
 
     text = slide["content"].strip()
+    words = text.split()
 
-    # Split by double newlines or long sentence groups
-    chunks = [c.strip() for c in text.split("\n\n") if len(c.strip()) > 50]
-
-    # If still one chunk, split by sentence count
-    if len(chunks) == 1:
-        sentences = text.split(". ")
-        mid = len(sentences) // 2
-        chunks = [
-            ". ".join(sentences[:mid]).strip(),
-            ". ".join(sentences[mid:]).strip(),
-        ]
+    # If content is already small, keep it as one slide
+    if len(words) <= max_words:
+        return [{
+            "slide": 1,
+            "content": text
+        }]
 
     slides = []
-    for i, chunk in enumerate(chunks, start=1):
-        slides.append({
-            "slide": i,
-            "content": chunk
-        })
+    slide_num = 1
+
+    for i in range(0, len(words), max_words):
+        chunk = " ".join(words[i:i + max_words]).strip()
+        if chunk:
+            slides.append({
+                "slide": slide_num,
+                "content": chunk
+            })
+            slide_num += 1
 
     return slides
 
+
 # ---------------- MAIN GENERATOR ----------------
 
-def generate_slidewise_script(slides: list[dict], tone: str = "educational") -> str:
+def generate_slidewise_script(
+    slides: list[dict],
+    tone: str = "educational"
+) -> str:
     """
     Generates a STRICT slide-wise teaching script.
 
@@ -65,7 +67,7 @@ def generate_slidewise_script(slides: list[dict], tone: str = "educational") -> 
     if not slides:
         raise ValueError("No slide content provided")
 
-    # 🔥 HARD FALLBACK: deterministic split if extractor collapsed slides
+    # 🔥 HARD FALLBACK: dynamic split if extractor collapsed slides
     if len(slides) == 1:
         slides = _split_single_slide_into_sections(slides[0])
 
@@ -77,9 +79,10 @@ def generate_slidewise_script(slides: list[dict], tone: str = "educational") -> 
     prompt = f"""
 You are an expert technical educator teaching a university-level class.
 
-Your task is to convert slide content into a CLEAR, STRICTLY SLIDE-WISE teaching script.
+Your task is to convert slide content into a CLEAR, STRICTLY SLIDE-WISE
+teaching script.
 
-🚨 CRITICAL CONSTRAINTS (DO NOT VIOLATE):
+ CRITICAL CONSTRAINTS (DO NOT VIOLATE):
 - The number of output slides MUST be EXACTLY {slide_count}
 - One input slide → ONE output slide
 - DO NOT split or merge slides
@@ -87,7 +90,7 @@ Your task is to convert slide content into a CLEAR, STRICTLY SLIDE-WISE teaching
 - Slide numbering MUST be sequential from 1 to {slide_count}
 - Explain ALL concepts from the slide within the SAME slide
 
-🚨 LANGUAGE RULES:
+ LANGUAGE RULES:
 - Do NOT use first-person language (I, we, today, let's)
 - No greetings, hooks, emojis, or conclusions
 - Academic, classroom-style explanation

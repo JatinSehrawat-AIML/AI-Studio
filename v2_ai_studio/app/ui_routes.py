@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from typing import Optional
 
 from services.script_service import generate_script_from_file
 from llm.image_generator import generate_images_for_slides
@@ -21,45 +22,45 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # HELPERS
 # --------------------------------------------------
 
-SLIDE_HEADER_RE = re.compile(r"^slide\s+(\d+)\s*:?", re.IGNORECASE)
-
-
 def parse_slides_from_script(script: str) -> list[dict]:
     """
-    Robust slide parser.
-    Splits slides even if 'Slide X' appears mid-paragraph.
+    Strict slide parser.
+    Only splits on lines that START with 'Slide X:'.
     """
-
-    pattern = re.compile(r"(Slide\s+\d+\s*:?)", re.IGNORECASE)
-    parts = pattern.split(script)
+    lines = script.splitlines()
 
     slides = []
     current_title = None
     current_text = []
 
-    for part in parts:
-        part = part.strip()
-        if not part:
+    header_pattern = re.compile(r"^Slide\s+(\d+)\s*:\s*$", re.IGNORECASE)
+
+    for line in lines:
+        line = line.strip()
+        if not line:
             continue
 
-        if pattern.match(part):
+        if header_pattern.match(line):
+            # Save previous slide
             if current_title:
                 slides.append({
                     "title": current_title,
                     "text": " ".join(current_text).strip()
                 })
-            current_title = part if part.endswith(":") else part + ":"
+
+            current_title = line
             current_text = []
         else:
-            current_text.append(part)
+            current_text.append(line)
 
+    # Last slide
     if current_title:
         slides.append({
             "title": current_title,
             "text": " ".join(current_text).strip()
         })
 
-    # Safety fallback
+    # Fallback if no headers detected
     if not slides:
         slides = [{
             "title": "Slide 1:",
@@ -68,35 +69,33 @@ def parse_slides_from_script(script: str) -> list[dict]:
 
     return slides
 
-def assign_slide_timings(slides: list[dict], duration: float):
-    per_slide = duration / max(len(slides), 1)
-    t = 0.0
+def attach_words_to_slides(slides: list[dict], words: list[dict]):
+    """
+    Assign words to slides strictly in sequence.
+    Guarantees slide boundaries and correct slide switching.
+    """
+    word_idx = 0
+    total_words = len(words)
 
     for idx, slide in enumerate(slides):
-        slide["start"] = round(t, 2)
-        slide["end"] = round(t + per_slide, 2)
-        slide["slide_index"] = idx
-        t += per_slide
+        slide_word_count = len(slide["text"].split())
 
+        # Safety clamp
+        end_idx = min(word_idx + slide_word_count, total_words)
 
-def attach_words_to_slides(slides: list[dict], words: list[dict]):
-    word_idx = 0
+        slide_words = words[word_idx:end_idx]
 
-    for slide in slides:
-        slide_words = []
-
-        while word_idx < len(words):
-            w = words[word_idx]
-
-            if slide["start"] <= w["start"] <= slide["end"]:
-                slide_words.append(w)
-                word_idx += 1
-            elif w["start"] > slide["end"]:
-                break
-            else:
-                word_idx += 1
+        if slide_words:
+            slide["start"] = slide_words[0]["start"]
+            slide["end"] = slide_words[-1]["end"]
+        else:
+            slide["start"] = 0.0
+            slide["end"] = 0.0
 
         slide["words"] = slide_words
+        slide["slide_index"] = idx
+
+        word_idx = end_idx
 
 
 # --------------------------------------------------
@@ -112,7 +111,7 @@ def home(request: Request):
 
 
 # --------------------------------------------------
-# 1️⃣ SCRIPT + IMAGE GENERATION (SLOW, ONE TIME)
+# 1️⃣ SCRIPT + IMAGE GENERATION
 # --------------------------------------------------
 
 @router.post("/ui/generate", response_class=HTMLResponse)
@@ -156,7 +155,6 @@ async def generate_script_ui(
 
     slides = parse_slides_from_script(script)
 
-    # 🔥 IMAGE GENERATION (ONLY ONCE)
     try:
         image_urls = generate_images_for_slides(slides)
     except Exception as e:
@@ -177,33 +175,51 @@ async def generate_script_ui(
 
 
 # --------------------------------------------------
-# 2️⃣ AUDIO ONLY (FAST)
+# 2️⃣ AUDIO + SLIDE SYNC
 # --------------------------------------------------
 
 @router.post("/ui/audio", response_class=HTMLResponse)
 def generate_audio_ui(
     request: Request,
     script: str = Form(...),
-    slides_json: str = Form(...)
+    slides_json: Optional[str] = Form(None)
 ):
-    if not script.strip():
+    print("➡️ /ui/audio called")
+
+    if not script or not script.strip():
         return templates.TemplateResponse(
             "index.html",
-            {
-                "request": request,
-                "error": "Script is empty."
-            }
+            {"request": request, "error": "Script is empty."}
         )
 
-    slides = json.loads(slides_json)
+    if not slides_json:
+        return templates.TemplateResponse(
+            "index.html",
+            {"request": request, "error": "Slide data missing. Please regenerate the script."}
+        )
 
-    audio_result = script_to_audio(script)
+    try:
+        slides = json.loads(slides_json)
+    except Exception as e:
+        print("❌ slides_json parse failed:", e)
+        return templates.TemplateResponse(
+            "index.html",
+            {"request": request, "error": "Invalid slide data."}
+        )
 
-    audio_url = audio_result["audio_url"]
-    duration = audio_result["duration"]
+    try:
+        print("🎙️ Generating audio...")
+        audio_result = script_to_audio(script)
+    except Exception as e:
+        print("❌ Audio generation failed:", e)
+        return templates.TemplateResponse(
+            "index.html",
+            {"request": request, "error": "Audio generation failed."}
+        )
+
     words = audio_result["timestamps"]
+    audio_url = audio_result["audio_url"]
 
-    assign_slide_timings(slides, duration)
     attach_words_to_slides(slides, words)
 
     return templates.TemplateResponse(
