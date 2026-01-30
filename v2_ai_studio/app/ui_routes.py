@@ -1,102 +1,100 @@
-from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi import APIRouter, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from typing import Optional
-
-from services.script_service import generate_script_from_file
-from llm.image_generator import generate_images_for_slides
-from tts.audio_generator import script_to_audio
 
 import os
 import uuid
 import re
 import json
+import logging
+
+from services.script_service import generate_script_from_file
+from llm.diagram_planner import generate_architecture_plan
+from diagram.frame_generator import progressive_frames, render_frame
+from tts.audio_generator import script_to_audio
+from video.moviepy_builder import build_video_from_frames
+from utils.cleanup import cleanup_directories
+
+# 🔥 KEY IMPORTS (keyword-driven diagrams)
+from diagram.keyword_extractor import extract_keywords_from_slide
+from diagram.keyword_to_graph import keywords_to_graph
+
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --------------------------------------------------
+# ROUTER SETUP
+# --------------------------------------------------
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 
 UPLOAD_DIR = "uploads"
+FRAME_DIR = "static/frames"
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(FRAME_DIR, exist_ok=True)
 
 # --------------------------------------------------
 # HELPERS
 # --------------------------------------------------
 
 def parse_slides_from_script(script: str) -> list[dict]:
-    """
-    Strict slide parser.
-    Only splits on lines that START with 'Slide X:'.
-    """
-    lines = script.splitlines()
-
     slides = []
-    current_title = None
-    current_text = []
+    pattern = re.compile(r"(Slide\s+\d+\s*:)", re.IGNORECASE)
+    parts = pattern.split(script)
 
-    header_pattern = re.compile(r"^Slide\s+(\d+)\s*:\s*$", re.IGNORECASE)
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        if header_pattern.match(line):
-            # Save previous slide
-            if current_title:
-                slides.append({
-                    "title": current_title,
-                    "text": " ".join(current_text).strip()
-                })
-
-            current_title = line
-            current_text = []
-        else:
-            current_text.append(line)
-
-    # Last slide
-    if current_title:
-        slides.append({
-            "title": current_title,
-            "text": " ".join(current_text).strip()
-        })
-
-    # Fallback if no headers detected
-    if not slides:
-        slides = [{
+    if len(parts) == 1:
+        return [{
             "title": "Slide 1:",
-            "text": script.strip()
+            "text": script.strip(),
+            "slide_index": 0
         }]
+
+    idx = 0
+    for i in range(1, len(parts), 2):
+        slides.append({
+            "title": parts[i].strip(),
+            "text": parts[i + 1].strip() if i + 1 < len(parts) else "",
+            "slide_index": idx
+        })
+        idx += 1
 
     return slides
 
+
+def normalize_slides(slides: list[dict]) -> list[dict]:
+    return [{
+        "title": s.get("title", f"Slide {i+1}:"),
+        "text": s.get("text", ""),
+        "frames": [],
+        "words": [],
+        "start": 0.0,
+        "end": 0.0,
+        "slide_index": s.get("slide_index", i)
+    } for i, s in enumerate(slides)]
+
+
 def attach_words_to_slides(slides: list[dict], words: list[dict]):
-    """
-    Assign words to slides strictly in sequence.
-    Guarantees slide boundaries and correct slide switching.
-    """
     word_idx = 0
-    total_words = len(words)
-
-    for idx, slide in enumerate(slides):
-        slide_word_count = len(slide["text"].split())
-
-        # Safety clamp
-        end_idx = min(word_idx + slide_word_count, total_words)
-
-        slide_words = words[word_idx:end_idx]
+    for slide in slides:
+        wc = len(slide["text"].split())
+        slide_words = words[word_idx: word_idx + wc]
 
         if slide_words:
             slide["start"] = slide_words[0]["start"]
             slide["end"] = slide_words[-1]["end"]
-        else:
-            slide["start"] = 0.0
-            slide["end"] = 0.0
 
         slide["words"] = slide_words
-        slide["slide_index"] = idx
+        word_idx += wc
 
-        word_idx = end_idx
-
+    if slides and words:
+        slides[-1]["end"] = words[-1]["end"]
 
 # --------------------------------------------------
 # ROUTES
@@ -104,14 +102,18 @@ def attach_words_to_slides(slides: list[dict], words: list[dict]):
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse("index.html", {"request": request})
 
+
+SLIDE_COMPLEXITY = {
+    0: 2,
+    1: 4,
+    2: 5,
+    3: 6,
+}
 
 # --------------------------------------------------
-# 1️⃣ SCRIPT + IMAGE GENERATION
+# SCRIPT + DIAGRAM GENERATION
 # --------------------------------------------------
 
 @router.post("/ui/generate", response_class=HTMLResponse)
@@ -119,114 +121,122 @@ async def generate_script_ui(
     request: Request,
     file: UploadFile = File(...)
 ):
-    filename = file.filename.lower()
-
-    if not filename.endswith((".pdf", ".pptx")):
+    if not file.filename.lower().endswith((".pdf", ".pptx")):
         return templates.TemplateResponse(
             "index.html",
-            {
-                "request": request,
-                "error": "Only PDF and PPTX files are supported."
-            }
+            {"request": request, "error": "Only PDF and PPTX files are supported."}
         )
 
-    file_path = os.path.join(
-        UPLOAD_DIR,
-        f"{uuid.uuid4()}_{file.filename}"
-    )
+    file_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}_{file.filename}")
 
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
     try:
+        # 1️⃣ Generate narration script (for audio ONLY)
         script = generate_script_from_file(file_path)
+        if not script.strip():
+            raise RuntimeError("Generated script is empty")
+
+        # 2️⃣ Slides (used for BOTH script + diagrams)
+        slides = normalize_slides(parse_slides_from_script(script))
+
+        # 3️⃣ Cleanup old frames
+        cleanup_directories([FRAME_DIR], keep_latest=False)
+        global_frame_counter = 1
+
+        # 4️⃣ Generate diagrams PER SLIDE (KEYWORD-DRIVEN)
+        for slide in slides:
+            slide_index = slide["slide_index"]
+            slide_text = slide["text"]
+
+            # 🔑 A) Extract keywords/components from slide text
+            keyword_data = extract_keywords_from_slide(slide_text)
+
+            # 🔑 B) Convert keywords → architecture graph
+            keyword_graph = keywords_to_graph(keyword_data)
+
+            # 🔁 C) Fallback ONLY if keyword extraction fails
+            if not keyword_graph.get("nodes"):
+                logger.warning(
+                    "Keyword graph empty, falling back to architecture planner"
+                )
+                keyword_graph = generate_architecture_plan(
+                    slide_text,
+                    max_nodes=SLIDE_COMPLEXITY.get(slide_index, 6),
+                    slide_index=slide_index
+                )
+
+            # 🔑 D) Generate progressive frames
+            slide_frames = progressive_frames(
+                keyword_graph,
+                mode="architecture"
+            )
+
+            slide["frames"] = []
+
+            for frame_plan in slide_frames:
+                try:
+                    frame_path = render_frame(frame_plan, global_frame_counter)
+                    if frame_path:
+                        slide["frames"].append(
+                            "/" + frame_path.replace("\\", "/")
+                        )
+                        global_frame_counter += 1
+                except Exception as e:
+                    logger.error(f"Frame render failed: {e}")
+
+    except Exception as e:
+        logger.exception("Script / diagram generation failed")
+        return templates.TemplateResponse(
+            "index.html",
+            {"request": request, "error": str(e)}
+        )
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-
-    if not script.strip():
-        return templates.TemplateResponse(
-            "index.html",
-            {
-                "request": request,
-                "error": "Failed to extract script from file."
-            }
-        )
-
-    slides = parse_slides_from_script(script)
-
-    try:
-        image_urls = generate_images_for_slides(slides)
-    except Exception as e:
-        print("⚠️ Image generation failed:", e)
-        image_urls = []
-
-    for slide, img in zip(slides, image_urls):
-        slide["image"] = img
 
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "script": script,
+            "slides": slides,
             "slides_json": json.dumps(slides)
         }
     )
 
-
 # --------------------------------------------------
-# 2️⃣ AUDIO + SLIDE SYNC
+# AUDIO + VIDEO
 # --------------------------------------------------
 
 @router.post("/ui/audio", response_class=HTMLResponse)
 def generate_audio_ui(
     request: Request,
+    background_tasks: BackgroundTasks,
     script: str = Form(...),
     slides_json: Optional[str] = Form(None)
 ):
-    print("➡️ /ui/audio called")
+    slides = json.loads(slides_json)
 
-    if not script or not script.strip():
-        return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "error": "Script is empty."}
-        )
-
-    if not slides_json:
-        return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "error": "Slide data missing. Please regenerate the script."}
-        )
-
-    try:
-        slides = json.loads(slides_json)
-    except Exception as e:
-        print("❌ slides_json parse failed:", e)
-        return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "error": "Invalid slide data."}
-        )
-
-    try:
-        print("🎙️ Generating audio...")
-        audio_result = script_to_audio(script)
-    except Exception as e:
-        print("❌ Audio generation failed:", e)
-        return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "error": "Audio generation failed."}
-        )
-
-    words = audio_result["timestamps"]
+    audio_result = script_to_audio(script)
     audio_url = audio_result["audio_url"]
+    words = audio_result["timestamps"]
 
     attach_words_to_slides(slides, words)
+
+    background_tasks.add_task(
+        build_video_from_frames,
+        slides=slides,
+        audio_path=audio_url.lstrip("/")
+    )
 
     return templates.TemplateResponse(
         "player.html",
         {
             "request": request,
             "audio_url": audio_url,
-            "slides": slides
+            "slides": slides,
+            "video_url": "/static/videos/final_demo.mp4"
         }
     )

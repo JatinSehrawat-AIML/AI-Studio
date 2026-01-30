@@ -3,6 +3,27 @@
 <head>
     <title>AI Tutor Studio</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        button[disabled] {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .error-box {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+
+        .divider {
+            height: 1px;
+            background: #e5e7eb;
+            margin: 20px 0;
+        }
+    </style>
 </head>
 
 <body>
@@ -16,9 +37,21 @@
         <h2>Upload Document</h2>
         <p>Upload a PDF or PPT</p>
 
-        <form action="/ui/generate" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required />
-            <button type="submit">Generate Script</button>
+        <form action="/ui/generate"
+              method="post"
+              enctype="multipart/form-data"
+              onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').innerText='Generating…';">
+
+            <input
+                type="file"
+                name="file"
+                accept=".pdf,.ppt,.pptx"
+                required
+            />
+
+            <button type="submit">
+                Generate Script & Diagrams
+            </button>
         </form>
     </section>
 
@@ -26,19 +59,22 @@
     <section class="right-panel">
         <h2>Generated Script</h2>
 
+        <!-- 🔴 ERROR DISPLAY -->
+        {% if error %}
+            <div class="error-box">
+                {{ error }}
+            </div>
+        {% endif %}
+
         <div class="content-box script-box">
-            {% if script %}
-                {% set blocks = script.split("Slide ") %}
-                {% for block in blocks if block.strip() %}
-                    {% set parts = block.split(":", 1) %}
-                    {% if parts|length == 2 %}
-                        <div style="margin-bottom: 20px;">
-                            <h4 style="color:#2563eb;">
-                                Slide {{ parts[0].strip() }}
-                            </h4>
-                            <p>{{ parts[1].strip() }}</p>
-                        </div>
-                    {% endif %}
+            {% if slides %}
+                {% for slide in slides %}
+                    <div style="margin-bottom: 20px;">
+                        <h4 style="color:#2563eb;">
+                            {{ slide.title | default("Slide " ~ loop.index) }}
+                        </h4>
+                        <p>{{ slide.text }}</p>
+                    </div>
                 {% endfor %}
             {% else %}
                 <p>Your generated tutorial script will appear here.</p>
@@ -46,17 +82,27 @@
         </div>
 
         {% if script and slides_json %}
-        <!-- AUDIO GENERATION -->
-        <form action="/ui/audio" method="post">
+            <div class="divider"></div>
 
-            <!-- REQUIRED -->
-            <textarea name="script" style="display:none;">{{ script }}</textarea>
+            <!-- AUDIO + VIDEO GENERATION -->
+            <form action="/ui/audio" method="post">
 
-            <!-- 🔥 REQUIRED: THIS WAS MISSING -->
-            <textarea name="slides_json" style="display:none;">{{ slides_json }}</textarea>
+                <!-- SCRIPT PAYLOAD -->
+                <textarea name="script" style="display:none;">{{ script }}</textarea>
 
-            <button type="submit">▶ Generate Audio & Slides</button>
-        </form>
+                <!-- SLIDE METADATA -->
+                <textarea name="slides_json" style="display:none;">
+                {{ slides | tojson }}
+                </textarea>
+
+                <button type="submit">
+                    ▶ Generate Audio & Video
+                </button>
+
+                <p style="margin-top:10px; font-size:13px; color:#64748b;">
+                    🎧 Audio plays immediately. 🎬 Video is generated in the background.
+                </p>
+            </form>
         {% endif %}
     </section>
 

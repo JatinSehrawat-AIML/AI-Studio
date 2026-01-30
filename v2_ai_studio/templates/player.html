@@ -26,7 +26,7 @@
             height: calc(100vh - 64px);
         }
 
-        /* LEFT PANEL (HYBRID VISUAL) */
+        /* LEFT PANEL */
         .slides {
             background: #020617;
             display: flex;
@@ -49,13 +49,21 @@
             border-radius: 16px;
             box-shadow: 0 30px 80px rgba(0,0,0,0.55);
             opacity: 0;
-            transform: scale(0.98);
-            transition: opacity 0.4s ease, transform 0.4s ease;
+            transform: scale(0.97);
+            transition: opacity 0.35s ease, transform 0.35s ease;
         }
 
-        #scene-image.active {
+        #scene-image.visible {
             opacity: 1;
             transform: scale(1);
+        }
+
+        #diagram-caption {
+            position: absolute;
+            bottom: 12px;
+            right: 16px;
+            font-size: 12px;
+            opacity: 0.6;
         }
 
         /* RIGHT PANEL */
@@ -81,7 +89,6 @@
             color: #38bdf8;
         }
 
-        /* WORD HIGHLIGHT */
         .word {
             opacity: 0.3;
             transition: all 0.12s linear;
@@ -105,59 +112,78 @@
 
 <div class="player-container">
 
-    <!-- LEFT: HYBRID BACKGROUND IMAGE -->
+    <!-- LEFT: FRAMES -->
     <div class="slides">
         <div id="visual-stage">
             <img id="scene-image" />
+            <div id="diagram-caption">
+                Diagram-as-Code (D2) • Audio-Synced
+            </div>
         </div>
     </div>
 
     <!-- RIGHT: TEXT + AUDIO -->
-    <div class="script-panel" id="script-panel">
+    <div class="script-panel">
         <audio id="audio" controls autoplay src="{{ audio_url }}"></audio>
         <div id="slide-text" class="slide-text"></div>
     </div>
 
 </div>
 
+<script id="slides-data" type="application/json">
+    {{ slides | tojson }}
+</script>
+
 <script>
     const audio = document.getElementById("audio");
     const img = document.getElementById("scene-image");
     const slideText = document.getElementById("slide-text");
 
-    const slides = {{ slides | tojson }};
+    const SLIDES = JSON.parse(
+        document.getElementById("slides-data").textContent
+    );
 
     let currentSlideIndex = -1;
     let currentWordEl = null;
-    let currentImageSrc = null;
+    let lastFrameSrc = null;
 
-    /* ---------- RENDER ---------- */
+    /* ---------------- SLIDE LOOKUP ---------------- */
 
-    function renderSlide(slide) {
-        renderImage(slide);
-        renderText(slide);
-        currentWordEl = null;
+    function getActiveSlide(t) {
+        return SLIDES.find((s, i) =>
+            t >= s.start &&
+            (i === SLIDES.length - 1 || t < SLIDES[i + 1].start)
+        );
     }
 
-    function renderImage(slide) {
-        // Hybrid: image is always a background visual
-        if (!slide.image || slide.image === currentImageSrc) return;
+    /* ---------------- FRAME SYNC (CORE LOGIC) ---------------- */
 
-        currentImageSrc = slide.image;
-        img.classList.remove("active");
-        img.src = slide.image;
+    function renderFrame(slide, t) {
+        if (!slide.frames || slide.frames.length === 0) return;
 
-        img.onload = () => {
-            img.classList.add("active");
-        };
+        const duration = Math.max(slide.end - slide.start, 0.01);
+        const progress = Math.min(
+            Math.max((t - slide.start) / duration, 0),
+            0.999
+        );
+
+        const index = Math.floor(progress * slide.frames.length);
+        const src = slide.frames[index];
+
+        if (src !== lastFrameSrc) {
+            lastFrameSrc = src;
+            img.classList.remove("visible");
+            img.src = src;
+            img.onload = () => img.classList.add("visible");
+        }
     }
+
+    /* ---------------- TEXT ---------------- */
 
     function renderText(slide) {
-        const words = slide.words || [];
-
         slideText.innerHTML = `
             <h3>${slide.title}</h3>
-            ${words.map(w =>
+            ${slide.words.map(w =>
                 `<span class="word"
                        data-start="${w.start}"
                        data-end="${w.end}">
@@ -167,17 +193,18 @@
         `;
     }
 
-    function highlightWord(slide, t) {
-        const wordEls = document.querySelectorAll(".word");
-        if (!wordEls.length) return;
+    /* ---------------- WORD HIGHLIGHT ---------------- */
 
-        for (const el of wordEls) {
-            const start = parseFloat(el.dataset.start);
-            const end = parseFloat(el.dataset.end);
+    function highlightWord(t) {
+        const words = document.querySelectorAll(".word");
+
+        for (const el of words) {
+            const start = +el.dataset.start;
+            const end = +el.dataset.end;
 
             if (t >= start && t <= end) {
                 if (currentWordEl !== el) {
-                    if (currentWordEl) currentWordEl.classList.remove("active");
+                    currentWordEl?.classList.remove("active");
                     el.classList.add("active");
                     currentWordEl = el;
 
@@ -189,32 +216,45 @@
                 return;
             }
         }
+
+        currentWordEl?.classList.remove("active");
+        currentWordEl = null;
     }
 
-    /* ---------- AUDIO SYNC ---------- */
+    /* ---------------- AUDIO DRIVER ---------------- */
 
     audio.ontimeupdate = () => {
         const t = audio.currentTime;
-
-        const slide = slides.find((s, i) =>
-            t >= s.start &&
-            (i === slides.length - 1 || t < slides[i + 1].start)
-        );
-
+        const slide = getActiveSlide(t);
         if (!slide) return;
 
         if (slide.slide_index !== currentSlideIndex) {
             currentSlideIndex = slide.slide_index;
-            renderSlide(slide);
+
+            // 🔥 HARD VISUAL RESET
+            img.classList.remove("active");
+            img.src = "";
+            img.offsetHeight; // force reflow
+
+            renderText(slide);
+
+            // Immediately load first frame of new slide
+            if (slide.frames && slide.frames.length > 0) {
+                img.src = slide.frames[0];
+                img.classList.add("active");
+            }
         }
 
-        highlightWord(slide, t);
+        renderFrame(slide, t);
+        highlightWord(t);
     };
 
-    // Initial render
-    if (slides.length > 0) {
-        renderSlide(slides[0]);
-        currentSlideIndex = slides[0].slide_index;
+    /* ---------------- INIT ---------------- */
+
+    if (SLIDES.length > 0) {
+        currentSlideIndex = SLIDES[0].slide_index;
+        renderText(SLIDES[0]);
+        renderFrame(SLIDES[0], SLIDES[0].start);
     }
 </script>
 

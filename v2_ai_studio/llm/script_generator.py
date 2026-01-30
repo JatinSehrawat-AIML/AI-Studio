@@ -1,5 +1,5 @@
 # llm/script_generator.py
-from llm.gemini_client import generate
+from llm.groq_client import generate
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]

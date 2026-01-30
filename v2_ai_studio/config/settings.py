@@ -2,21 +2,39 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent
+# --------------------------------------------------
+# ENV LOADING
+# --------------------------------------------------
 
+BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
+
 load_dotenv(ENV_PATH)
 
-# API Keys
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --------------------------------------------------
+# HUGGING FACE CONFIG
+# --------------------------------------------------
 
-# Model config (future-proof)
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "models/gemini-2.5-flash")
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
-# Processing defaults
+# Default model (can be overridden via .env)
+HF_MODEL = os.getenv(
+    "HF_MODEL",
+    "mistralai/zephyr-7b-beta"
+)
+
+# --------------------------------------------------
+# PROCESSING DEFAULTS
+# --------------------------------------------------
+
 MAX_CHUNK_SIZE = int(os.getenv("MAX_CHUNK_SIZE", 800))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set in config/.env file")
+# --------------------------------------------------
+# SAFETY CHECKS
+# --------------------------------------------------
 
+if not HF_API_TOKEN:
+    raise RuntimeError(
+        "HF_API_TOKEN is not set in config/.env file"
+    )

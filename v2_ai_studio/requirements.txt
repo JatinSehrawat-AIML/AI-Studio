@@ -1,4 +1,4 @@
-google-genai
+requests
 pdfplumber
 python-pptx
 beautifulsoup4
