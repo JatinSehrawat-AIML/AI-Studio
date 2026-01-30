@@ -30,6 +30,12 @@ whisper_model = WhisperModel(
 
 # ---------------- MAIN ----------------
 
+def clean_script_for_tts(script: str) -> str:
+    """
+    Removes 'Slide X' markers to keep TTS and slide text aligned.
+    """
+    return re.sub(r"Slide\s+\d+\s*:?", "", script, flags=re.IGNORECASE)
+
 def script_to_audio(script: str) -> dict:
     if not script or not script.strip():
         raise ValueError("Empty script cannot be converted to audio")

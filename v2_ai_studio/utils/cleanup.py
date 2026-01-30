@@ -1,18 +1,25 @@
-import os
-import shutil
+from pathlib import Path
+from typing import Iterable
 
-def cleanup_directories(dirs: list[str]):
-    """
-    Deletes all files inside given directories.
-    Directory itself is preserved.
-    """
+def cleanup_directories(
+    dirs: Iterable[str],
+    keep_latest: bool = False
+):
     for dir_path in dirs:
-        if not os.path.exists(dir_path):
+        path = Path(dir_path)
+        if not path.exists() or not path.is_dir():
             continue
 
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                try:
-                    os.remove(os.path.join(root, file))
-                except Exception as e:
-                    print(f"[WARN] Failed to delete {file}: {e}")
+        files = [f for f in path.rglob("*") if f.is_file()]
+        if not files:
+            continue
+
+        latest = max(files, key=lambda f: f.stat().st_mtime) if keep_latest else None
+
+        for f in files:
+            if keep_latest and f == latest:
+                continue
+            try:
+                f.unlink()
+            except Exception:
+                pass

@@ -1,6 +1,3 @@
-Today, we’ll look at the key AWS services used in machine learning.
-We’ll divide this into two parts: compute and model training, and then data storage and processing.”
-
 First, let’s talk about compute and training.
 The most important service here is Amazon SageMaker. Think of SageMaker as an all-in-one platform for machine learning. It allows us to build models, train them at scale, and deploy them without managing infrastructure. It also supports distributed training, hyperparameter tuning, pipelines, and both real-time and batch inference, all in one place.
 
